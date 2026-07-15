@@ -133,7 +133,6 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      transform: scaleX(-1);
     }
 
     #game-over-overlay.visible {
@@ -282,18 +281,105 @@
     const SPAWN_INTERVAL_MS = 1050;
     const BOMB_CHANCE = 0.18;
     const COMBO_TIMEOUT_MS = 500;
-    const TRAIL_LENGTH = 18;
+    const TRAIL_LENGTH = 25;
+    const SLICE_BUFFER = 26;
 
+    // one whole-fruit PNG per fruit, drop these files in assets/fruits/ using these exact names
+    // (note the "lemon lime" folder becomes lemon_lime.png, no spaces in filenames)
+    const SPRITE_PATHS = {
+      melon: 'assets/fruits/melon.png',
+      orange: 'assets/fruits/orange.png',
+      peach: 'assets/fruits/peach.png',
+      dragonfruit: 'assets/fruits/dragonfruit.png',
+      grape: 'assets/fruits/grape.png',
+      papaya: 'assets/fruits/papaya.png',
+      pineapple: 'assets/fruits/pineapple.png',
+      banana: 'assets/fruits/banana.png',
+      berry: 'assets/fruits/berry.png',
+      coconut: 'assets/fruits/coconut.png',
+      cherry: 'assets/fruits/cherry.png',
+      lemon_lime: 'assets/fruits/lemon_lime.png',
+      watermelon: 'assets/fruits/watermelon.png',
+      apple: 'assets/fruits/apple.png',
+      blueberry: 'assets/fruits/blueberry.png',
+      kiwi: 'assets/fruits/kiwi.png',
+      pear: 'assets/fruits/pear.png',
+      strawberry: 'assets/fruits/strawberry.png'
+    };
+
+    const loadedImages = {};
+
+    function preloadSprites() {
+      const promises = Object.entries(SPRITE_PATHS).map(([key, path]) => {
+        return new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            loadedImages[key] = img;
+            resolve();
+          };
+          img.onerror = () => {
+            console.warn('Sprite missing, using fallback shape:', path);
+            loadedImages[key] = null;
+            resolve();
+          };
+          img.src = path;
+        });
+      });
+      return Promise.all(promises);
+    }
+
+    // radius: bigger fruit = bigger hitbox but worth fewer points, smaller fruit = harder to hit, worth more
     const FRUIT_TYPES = [
-      { name: 'apple', radius: 46, core: '#ff2f4d', glow: 'rgba(255, 47, 77, 0.85)', accent: '#3ddc84', points: 10 },
-      { name: 'orange', radius: 50, core: '#ff9d2f', glow: 'rgba(255, 157, 47, 0.85)', accent: '#ffe64d', points: 10 },
-      { name: 'watermelon', radius: 60, core: '#3ddc84', glow: 'rgba(61, 220, 132, 0.85)', accent: '#ff2f4d', points: 15 },
-      { name: 'kiwi', radius: 42, core: '#c6ff2f', glow: 'rgba(198, 255, 47, 0.85)', accent: '#7fffd4', points: 10 }
+      { name: 'melon', spriteKey: 'melon', radius: 58, glow: 'rgba(255, 179, 71, 0.85)', fallbackColor: '#ffb347', points: 8 },
+      { name: 'orange', spriteKey: 'orange', radius: 48, glow: 'rgba(255, 157, 47, 0.85)', fallbackColor: '#ff9d2f', points: 10 },
+      { name: 'peach', spriteKey: 'peach', radius: 46, glow: 'rgba(255, 185, 151, 0.85)', fallbackColor: '#ffb997', points: 10 },
+      { name: 'dragonfruit', spriteKey: 'dragonfruit', radius: 50, glow: 'rgba(255, 47, 176, 0.85)', fallbackColor: '#ff2fb0', points: 12 },
+      { name: 'grape', spriteKey: 'grape', radius: 36, glow: 'rgba(155, 93, 229, 0.85)', fallbackColor: '#9b5de5', points: 15 },
+      { name: 'papaya', spriteKey: 'papaya', radius: 48, glow: 'rgba(255, 127, 80, 0.85)', fallbackColor: '#ff7f50', points: 10 },
+      { name: 'pineapple', spriteKey: 'pineapple', radius: 58, glow: 'rgba(255, 230, 77, 0.85)', fallbackColor: '#ffe64d', points: 8 },
+      { name: 'banana', spriteKey: 'banana', radius: 50, glow: 'rgba(255, 230, 77, 0.85)', fallbackColor: '#ffe64d', points: 10 },
+      { name: 'berry', spriteKey: 'berry', radius: 36, glow: 'rgba(194, 24, 91, 0.85)', fallbackColor: '#c2185b', points: 15 },
+      { name: 'coconut', spriteKey: 'coconut', radius: 56, glow: 'rgba(210, 180, 140, 0.85)', fallbackColor: '#d2b48c', points: 8 },
+      { name: 'cherry', spriteKey: 'cherry', radius: 36, glow: 'rgba(255, 47, 77, 0.85)', fallbackColor: '#ff2f4d', points: 15 },
+      { name: 'lemon_lime', spriteKey: 'lemon_lime', radius: 44, glow: 'rgba(198, 255, 47, 0.85)', fallbackColor: '#c6ff2f', points: 10 },
+      { name: 'watermelon', spriteKey: 'watermelon', radius: 60, glow: 'rgba(61, 220, 132, 0.85)', fallbackColor: '#3ddc84', points: 8 },
+      { name: 'apple', spriteKey: 'apple', radius: 46, glow: 'rgba(61, 220, 132, 0.85)', fallbackColor: '#3ddc84', points: 10 },
+      { name: 'blueberry', spriteKey: 'blueberry', radius: 34, glow: 'rgba(77, 121, 255, 0.85)', fallbackColor: '#4d79ff', points: 15 },
+      { name: 'kiwi', spriteKey: 'kiwi', radius: 40, glow: 'rgba(139, 195, 74, 0.85)', fallbackColor: '#8bc34a', points: 12 },
+      { name: 'pear', spriteKey: 'pear', radius: 46, glow: 'rgba(212, 225, 87, 0.85)', fallbackColor: '#d4e157', points: 10 },
+      { name: 'strawberry', spriteKey: 'strawberry', radius: 42, glow: 'rgba(255, 47, 77, 0.85)', fallbackColor: '#ff2f4d', points: 12 }
     ];
+
+    const HEART_ROWS = [
+      '.XX.XX.',
+      'XXXXXXX',
+      'XXXXXXX',
+      'XXXXXXX',
+      '.XXXXX.',
+      '..XXX..',
+      '...X...'
+    ];
+
+    const BOMB_GRID_SIZE = 9;
+    const BOMB_CIRCLE_MASK = (() => {
+      const mask = [];
+      const center = (BOMB_GRID_SIZE - 1) / 2;
+      for (let r = 0; r < BOMB_GRID_SIZE; r++) {
+        const row = [];
+        for (let c = 0; c < BOMB_GRID_SIZE; c++) {
+          const dx = c - center;
+          const dy = r - center;
+          row.push(Math.sqrt(dx * dx + dy * dy) <= center + 0.3);
+        }
+        mask.push(row);
+      }
+      return mask;
+    })();
 
     let handLandmarker;
     let audioReady = false;
     let modelReady = false;
+    let spritesReady = false;
     let currentPlayerName = '';
     let gameActive = false;
 
@@ -424,7 +510,10 @@
           delegate: "GPU"
         },
         runningMode: "VIDEO",
-        numHands: 1
+        numHands: 1,
+        minHandDetectionConfidence: 0.4,
+        minHandPresenceConfidence: 0.4,
+        minTrackingConfidence: 0.4
       });
 
       modelReady = true;
@@ -463,6 +552,12 @@
 
       nameGate.style.display = 'none';
       mainContent.style.display = 'block';
+
+      if (!spritesReady) {
+        status.textContent = "Loading sprites...";
+        await preloadSprites();
+        spritesReady = true;
+      }
 
       if (!audioReady) {
         try {
@@ -563,7 +658,7 @@
 
       const isBomb = Math.random() < BOMB_CHANCE;
       const startX = canvas.width * 0.15 + Math.random() * canvas.width * 0.7;
-      const launchSpeed = mapRange(Math.random(), 0, 1, 13, 17);
+      const launchSpeed = mapRange(Math.random(), 0, 1, 19, 23);
 
       if (isBomb) {
         activeObjects.push({
@@ -621,7 +716,8 @@
     }
 
     function spawnSliceEffect(obj) {
-      const color = obj.isBomb ? '#ff2f4d' : obj.type.core;
+      if (obj.isBomb) return;
+      const color = obj.type.fallbackColor;
       for (let side = -1; side <= 1; side += 2) {
         sliceEffects.push({
           x: obj.x,
@@ -697,7 +793,7 @@
 
       activeObjects = activeObjects.filter((obj) => {
         const distance = pointToSegmentDistance(obj.x, obj.y, a.x, a.y, b.x, b.y);
-        if (distance < obj.radius + 12) {
+        if (distance < obj.radius + SLICE_BUFFER) {
           registerSlice(obj);
           return false;
         }
@@ -720,47 +816,58 @@
       ctx.fill();
     }
 
-    function drawUnmirroredText(text, x, y, color, fontSize, align) {
+    function drawUnmirroredText(text, x, y, color, fontSize) {
       ctx.save();
       ctx.translate(x, y);
       ctx.scale(-1, 1);
       ctx.fillStyle = color;
       ctx.font = fontSize + 'px monospace';
-      ctx.textAlign = align || 'center';
+      ctx.textAlign = 'center';
       ctx.fillText(text, 0, 0);
       ctx.restore();
     }
 
-    function drawFruit(obj) {
-      const { x, y, radius, type } = obj;
+    function drawHeartIcon(x, y, size, filled) {
+      const rows = HEART_ROWS.length;
+      const cols = HEART_ROWS[0].length;
+      const cell = size / cols;
 
       ctx.save();
       ctx.translate(x, y);
-      ctx.rotate(obj.rotation);
+      ctx.scale(-1, 1);
 
-      const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
-      gradient.addColorStop(0, type.glow);
-      gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
-      ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.arc(0, 0, radius, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = type.core;
-      ctx.beginPath();
-      ctx.arc(0, 0, radius * 0.75, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = type.accent;
-      ctx.beginPath();
-      ctx.arc(radius * 0.15, -radius * 0.15, radius * 0.35, 0, Math.PI * 2);
-      ctx.fill();
-
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (HEART_ROWS[r][c] !== 'X') continue;
+          ctx.fillStyle = filled ? '#ff2fb0' : 'rgba(255, 47, 176, 0.25)';
+          ctx.fillRect(
+            Math.floor(-size / 2 + c * cell),
+            Math.floor(-size / 2 + r * cell),
+            Math.ceil(cell) + 1,
+            Math.ceil(cell) + 1
+          );
+        }
+      }
       ctx.restore();
     }
 
-    function drawBomb(obj) {
+    function drawLivesRow() {
+      const iconSize = canvas.width * 0.035;
+      const startX = canvas.width * 0.12;
+      const y = canvas.height * 0.06;
+
+      for (let i = 0; i < STARTING_LIVES; i++) {
+        const iconX = startX + i * (iconSize + 10);
+        drawHeartIcon(iconX, y, iconSize, i < lives);
+      }
+    }
+
+    function drawBombIcon(obj) {
       const { x, y, radius } = obj;
+      const boxSize = radius * 2.1;
+      const cell = boxSize / BOMB_GRID_SIZE;
+      const originX = -boxSize / 2;
+      const originY = -boxSize / 2;
       const pulse = Math.sin(performance.now() / 150) * 0.15 + 0.85;
 
       ctx.save();
@@ -774,16 +881,65 @@
       ctx.arc(0, 0, radius * 1.4, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.fillStyle = '#1a1a1a';
-      ctx.beginPath();
-      ctx.arc(0, 0, radius, 0, Math.PI * 2);
-      ctx.fill();
+      for (let r = 0; r < BOMB_GRID_SIZE; r++) {
+        for (let c = 0; c < BOMB_GRID_SIZE; c++) {
+          if (!BOMB_CIRCLE_MASK[r][c]) continue;
+          const distFromEdge = Math.min(r, c, BOMB_GRID_SIZE - 1 - r, BOMB_GRID_SIZE - 1 - c);
+          ctx.fillStyle = distFromEdge === 0 ? `rgba(255, 47, 77, ${pulse})` : '#1a1a1a';
+          ctx.fillRect(
+            Math.floor(originX + c * cell),
+            Math.floor(originY + r * cell),
+            Math.ceil(cell) + 1,
+            Math.ceil(cell) + 1
+          );
+        }
+      }
 
-      ctx.strokeStyle = `rgba(255, 47, 77, ${pulse})`;
+      const fuseStartX = radius * 0.25;
+      const fuseStartY = -radius * 0.85;
+      ctx.strokeStyle = '#8a6d3b';
       ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.arc(0, 0, radius * 0.9, 0, Math.PI * 2);
+      ctx.moveTo(fuseStartX, fuseStartY);
+      ctx.lineTo(fuseStartX + radius * 0.3, fuseStartY - radius * 0.35);
       ctx.stroke();
+
+      const sparkX = fuseStartX + radius * 0.3;
+      const sparkY = fuseStartY - radius * 0.35;
+      ctx.fillStyle = `rgba(255, 230, 77, ${pulse})`;
+      ctx.beginPath();
+      ctx.arc(sparkX, sparkY, radius * 0.14 * pulse, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    function drawFruitSprite(obj) {
+      const { x, y, radius, type, rotation } = obj;
+      const img = loadedImages[type.spriteKey];
+      const size = radius * 2.3;
+
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(rotation);
+
+      const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, radius * 1.3);
+      gradient.addColorStop(0, type.glow);
+      gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(0, 0, radius * 1.3, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (img) {
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(img, -size / 2, -size / 2, size, size);
+      } else {
+        ctx.fillStyle = type.fallbackColor;
+        ctx.beginPath();
+        ctx.arc(0, 0, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
       ctx.restore();
     }
@@ -840,17 +996,12 @@
     }
 
     function drawHud() {
-      drawUnmirroredText('SCORE ' + score, canvas.width - canvas.width * 0.03, canvas.height * 0.06, 'rgba(127, 255, 212, 0.9)', canvas.width * 0.022, 'right');
-
-      let livesText = '';
-      for (let i = 0; i < STARTING_LIVES; i++) {
-        livesText += i < lives ? '<3 ' : '.. ';
-      }
-      drawUnmirroredText(livesText, canvas.width * 0.03, canvas.height * 0.06, 'rgba(255, 47, 176, 0.9)', canvas.width * 0.022, 'left');
+      drawUnmirroredText('SCORE ' + score, canvas.width - canvas.width * 0.15, canvas.height * 0.06, 'rgba(127, 255, 212, 0.9)', canvas.width * 0.02);
+      drawLivesRow();
 
       if (comboFlash.alpha > 0) {
         ctx.globalAlpha = comboFlash.alpha;
-        drawUnmirroredText(comboFlash.text, canvas.width / 2, canvas.height * 0.15, comboFlash.color, canvas.width * 0.032, 'center');
+        drawUnmirroredText(comboFlash.text, canvas.width / 2, canvas.height * 0.15, comboFlash.color, canvas.width * 0.032);
         ctx.globalAlpha = 1;
         comboFlash.alpha -= 0.02;
       }
@@ -904,9 +1055,9 @@
 
       activeObjects.forEach((obj) => {
         if (obj.isBomb) {
-          drawBomb(obj);
+          drawBombIcon(obj);
         } else {
-          drawFruit(obj);
+          drawFruitSprite(obj);
         }
       });
 
