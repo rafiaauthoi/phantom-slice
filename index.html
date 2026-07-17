@@ -282,10 +282,9 @@
     const BOMB_CHANCE = 0.18;
     const COMBO_TIMEOUT_MS = 500;
     const TRAIL_LENGTH = 25;
-    const SLICE_BUFFER = 26;
+    const FRUIT_SLICE_BUFFER = 26;
+    const BOMB_SLICE_BUFFER = 8;
 
-    // one whole-fruit PNG per fruit, drop these files in assets/fruits/ using these exact names
-    // (note the "lemon lime" folder becomes lemon_lime.png, no spaces in filenames)
     const SPRITE_PATHS = {
       melon: 'assets/fruits/melon.png',
       orange: 'assets/fruits/orange.png',
@@ -328,21 +327,20 @@
       return Promise.all(promises);
     }
 
-    // radius: bigger fruit = bigger hitbox but worth fewer points, smaller fruit = harder to hit, worth more
     const FRUIT_TYPES = [
-      { name: 'melon', spriteKey: 'melon', radius: 58, glow: 'rgba(255, 179, 71, 0.85)', fallbackColor: '#ffb347', points: 8 },
+      { name: 'melon', spriteKey: 'melon', radius: 58, glow: 'rgba(255, 179, 71, 0.85)', fallbackColor: '#ffb347', points: 20 },
       { name: 'orange', spriteKey: 'orange', radius: 48, glow: 'rgba(255, 157, 47, 0.85)', fallbackColor: '#ff9d2f', points: 10 },
       { name: 'peach', spriteKey: 'peach', radius: 46, glow: 'rgba(255, 185, 151, 0.85)', fallbackColor: '#ffb997', points: 10 },
       { name: 'dragonfruit', spriteKey: 'dragonfruit', radius: 50, glow: 'rgba(255, 47, 176, 0.85)', fallbackColor: '#ff2fb0', points: 12 },
       { name: 'grape', spriteKey: 'grape', radius: 36, glow: 'rgba(155, 93, 229, 0.85)', fallbackColor: '#9b5de5', points: 15 },
-      { name: 'papaya', spriteKey: 'papaya', radius: 48, glow: 'rgba(255, 127, 80, 0.85)', fallbackColor: '#ff7f50', points: 10 },
-      { name: 'pineapple', spriteKey: 'pineapple', radius: 58, glow: 'rgba(255, 230, 77, 0.85)', fallbackColor: '#ffe64d', points: 8 },
+      { name: 'papaya', spriteKey: 'papaya', radius: 48, glow: 'rgba(255, 127, 80, 0.85)', fallbackColor: '#ff7f50', points: 20 },
+      { name: 'pineapple', spriteKey: 'pineapple', radius: 58, glow: 'rgba(255, 230, 77, 0.85)', fallbackColor: '#ffe64d', points: 20 },
       { name: 'banana', spriteKey: 'banana', radius: 50, glow: 'rgba(255, 230, 77, 0.85)', fallbackColor: '#ffe64d', points: 10 },
       { name: 'berry', spriteKey: 'berry', radius: 36, glow: 'rgba(194, 24, 91, 0.85)', fallbackColor: '#c2185b', points: 15 },
-      { name: 'coconut', spriteKey: 'coconut', radius: 56, glow: 'rgba(210, 180, 140, 0.85)', fallbackColor: '#d2b48c', points: 8 },
+      { name: 'coconut', spriteKey: 'coconut', radius: 56, glow: 'rgba(210, 180, 140, 0.85)', fallbackColor: '#d2b48c', points: 20 },
       { name: 'cherry', spriteKey: 'cherry', radius: 36, glow: 'rgba(255, 47, 77, 0.85)', fallbackColor: '#ff2f4d', points: 15 },
       { name: 'lemon_lime', spriteKey: 'lemon_lime', radius: 44, glow: 'rgba(198, 255, 47, 0.85)', fallbackColor: '#c6ff2f', points: 10 },
-      { name: 'watermelon', spriteKey: 'watermelon', radius: 60, glow: 'rgba(61, 220, 132, 0.85)', fallbackColor: '#3ddc84', points: 8 },
+      { name: 'watermelon', spriteKey: 'watermelon', radius: 60, glow: 'rgba(61, 220, 132, 0.85)', fallbackColor: '#3ddc84', points: 20 },
       { name: 'apple', spriteKey: 'apple', radius: 46, glow: 'rgba(61, 220, 132, 0.85)', fallbackColor: '#3ddc84', points: 10 },
       { name: 'blueberry', spriteKey: 'blueberry', radius: 34, glow: 'rgba(77, 121, 255, 0.85)', fallbackColor: '#4d79ff', points: 15 },
       { name: 'kiwi', spriteKey: 'kiwi', radius: 40, glow: 'rgba(139, 195, 74, 0.85)', fallbackColor: '#8bc34a', points: 12 },
@@ -383,7 +381,7 @@
     let currentPlayerName = '';
     let gameActive = false;
 
-    let sliceSynth, bombSynth, bombBoom, comboSynth, gameOverSynth;
+    let slicePlayer, lofiPlayer, explosionSynth, bombNoise, bombBoom, comboSynth, gameOverSynth;
 
     let score = 0;
     let lives = STARTING_LIVES;
@@ -464,22 +462,27 @@
       const reverb = new Tone.Reverb({ decay: 1.2, wet: 0.15 }).connect(masterGain);
       await reverb.generate();
 
-      sliceSynth = new Tone.PolySynth(Tone.Synth, {
-        oscillator: { type: 'triangle' },
-        envelope: { attack: 0.001, decay: 0.15, sustain: 0, release: 0.1 }
-      }).connect(reverb);
-      sliceSynth.volume.value = -8;
+      // real slice sound effect file, only ever plays when a fruit is actually sliced
+      slicePlayer = new Tone.Player('assets/sounds/slice.mp3').connect(reverb);
+      slicePlayer.volume.value = -4;
 
-      bombSynth = new Tone.NoiseSynth({
-        noise: { type: 'brown' },
-        envelope: { attack: 0.001, decay: 0.3, sustain: 0 }
+      // bomb explosion: three layers stacked together for a dramatic "whump"
+      explosionSynth = new Tone.Synth({
+        oscillator: { type: 'sawtooth' },
+        envelope: { attack: 0.001, decay: 0.5, sustain: 0, release: 0.2 }
       }).connect(reverb);
-      bombSynth.volume.value = -4;
+      explosionSynth.volume.value = -6;
+
+      bombNoise = new Tone.NoiseSynth({
+        noise: { type: 'brown' },
+        envelope: { attack: 0.001, decay: 0.35, sustain: 0 }
+      }).connect(reverb);
+      bombNoise.volume.value = -6;
 
       bombBoom = new Tone.MembraneSynth({
-        pitchDecay: 0.08,
-        octaves: 5,
-        envelope: { attack: 0.001, decay: 0.4, sustain: 0 }
+        pitchDecay: 0.1,
+        octaves: 6,
+        envelope: { attack: 0.001, decay: 0.5, sustain: 0 }
       }).connect(reverb);
       bombBoom.volume.value = -2;
 
@@ -495,7 +498,23 @@
       }).connect(reverb);
       gameOverSynth.volume.value = -6;
 
+      // real background music file, looped, kept quiet under gameplay sounds
+      lofiPlayer = new Tone.Player('assets/sounds/folk-lofi.mp3').toDestination();
+      lofiPlayer.volume.value = -20;
+
+      // wait for both audio files to actually finish loading before trying to play them,
+      // this is what was missing before and caused the whole startup sequence to crash
+      await Tone.loaded();
+
       audioReady = true;
+      startLofiLoop();
+    }
+
+    function startLofiLoop() {
+      if (lofiPlayer) {
+        lofiPlayer.loop = true;
+        lofiPlayer.start();
+      }
     }
 
     async function setupHandLandmarker() {
@@ -564,9 +583,10 @@
           status.textContent = "Starting audio...";
           await setupAudio();
         } catch (error) {
-          console.error("Audio setup failed:", error);
-          status.textContent = "Audio setup failed: " + error.message;
-          return;
+          console.error("Audio setup failed, continuing without full audio:", error);
+          status.textContent = "Some audio failed to load, continuing anyway...";
+          // deliberately no "return" here, so a music/sound problem can never
+          // prevent the camera and game itself from starting
         }
       }
 
@@ -738,16 +758,34 @@
       comboFlash = { text, alpha: 1, color };
     }
 
+    function playSlashSound() {
+      if (slicePlayer && slicePlayer.loaded) {
+        slicePlayer.stop();
+        slicePlayer.start();
+      }
+    }
+
+    function playExplosionSound() {
+      const now = Tone.now();
+      if (explosionSynth) {
+        explosionSynth.triggerAttack('A3', now);
+        explosionSynth.frequency.exponentialRampToValueAtTime(35, now + 0.4);
+        explosionSynth.triggerRelease(now + 0.4);
+      }
+      if (bombNoise) bombNoise.triggerAttackRelease('8n');
+      if (bombBoom) bombBoom.triggerAttackRelease('C1', '4n');
+    }
+
     function registerSlice(obj) {
       const now = performance.now();
 
       if (obj.isBomb) {
         lives--;
+        console.log('LIFE LOST: sliced a bomb at', Math.round(obj.x), Math.round(obj.y), '| lives now:', lives);
         comboCount = 0;
         triggerComboFlash('BOMB!', 'rgba(255, 47, 77, 1)');
         spawnBurst(obj.x, obj.y, 30, 'rgba(255, 47, 77, ALPHA)');
-        if (bombSynth) bombSynth.triggerAttackRelease('4n');
-        if (bombBoom) bombBoom.triggerAttackRelease('C1', '4n');
+        playExplosionSound();
       } else {
         if (now - lastSliceTimestamp < COMBO_TIMEOUT_MS) {
           comboCount++;
@@ -765,10 +803,7 @@
         }
 
         spawnBurst(obj.x, obj.y, 18, obj.type.glow.replace('0.85', 'ALPHA'));
-        if (sliceSynth) {
-          const notes = ['C5', 'D5', 'E5', 'G5', 'A5'];
-          sliceSynth.triggerAttackRelease(notes[Math.floor(Math.random() * notes.length)], '16n');
-        }
+        playSlashSound();
       }
 
       spawnSliceEffect(obj);
@@ -792,8 +827,9 @@
       const b = trailPoints[trailPoints.length - 1];
 
       activeObjects = activeObjects.filter((obj) => {
+        const buffer = obj.isBomb ? BOMB_SLICE_BUFFER : FRUIT_SLICE_BUFFER;
         const distance = pointToSegmentDistance(obj.x, obj.y, a.x, a.y, b.x, b.y);
-        if (distance < obj.radius + SLICE_BUFFER) {
+        if (distance < obj.radius + buffer) {
           registerSlice(obj);
           return false;
         }
@@ -1015,17 +1051,27 @@
         obj.rotation += 0.03;
       });
 
-      const missedFruits = activeObjects.filter((obj) => obj.y - obj.radius > canvas.height && !obj.isBomb);
-      if (missedFruits.length > 0) {
-        lives -= missedFruits.length;
+      let missedCount = 0;
+      activeObjects = activeObjects.filter((obj) => {
+        const fellPastBottom = obj.vy > 0 && (obj.y - obj.radius > canvas.height);
+        if (fellPastBottom) {
+          if (!obj.isBomb) {
+            missedCount++;
+            console.log('LIFE LOST: missed a fruit falling off screen, type:', obj.type.name);
+          }
+          return false;
+        }
+        return true;
+      });
+
+      if (missedCount > 0) {
+        lives -= missedCount;
+        console.log('Lives now:', lives);
         comboCount = 0;
         if (lives <= 0) {
-          activeObjects = activeObjects.filter((obj) => obj.y - obj.radius <= canvas.height || obj.isBomb);
           endGame();
         }
       }
-
-      activeObjects = activeObjects.filter((obj) => obj.y - obj.radius <= canvas.height + 5);
     }
 
     function renderLoop() {
