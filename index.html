@@ -232,7 +232,7 @@
     <div id="main-row">
       <div id="video-wrapper">
         <video id="webcam" autoplay playsinline></video>
-        <canvas id="overlay" width="1280" height="960"></canvas>
+        <canvas id="overlay" width="960" height="720"></canvas>
         <div id="game-over-overlay">
           <h2>GAME OVER</h2>
           <p id="finalScoreText">Score: 0</p>
@@ -284,6 +284,7 @@
     const TRAIL_LENGTH = 25;
     const FRUIT_SLICE_BUFFER = 26;
     const BOMB_SLICE_BUFFER = 8;
+    const MAX_PARTICLES = 150;
 
     const SPRITE_PATHS = {
       melon: 'assets/fruits/melon.png',
@@ -395,6 +396,12 @@
     let spawnTimerId = null;
     let leaderboard = [];
 
+    // used to run hand detection every other frame instead of every frame,
+    // which roughly halves MediaPipe's workload and prevents progressive slowdown
+    let frameCounter = 0;
+    let lastFingerX = null;
+    let lastFingerY = null;
+
     function loadLeaderboard() {
       try {
         const raw = localStorage.getItem(LEADERBOARD_KEY);
@@ -462,11 +469,9 @@
       const reverb = new Tone.Reverb({ decay: 1.2, wet: 0.15 }).connect(masterGain);
       await reverb.generate();
 
-      // real slice sound effect file, only ever plays when a fruit is actually sliced
       slicePlayer = new Tone.Player('assets/sounds/slice.mp3').connect(reverb);
       slicePlayer.volume.value = -4;
 
-      // bomb explosion: three layers stacked together for a dramatic "whump"
       explosionSynth = new Tone.Synth({
         oscillator: { type: 'sawtooth' },
         envelope: { attack: 0.001, decay: 0.5, sustain: 0, release: 0.2 }
@@ -498,12 +503,9 @@
       }).connect(reverb);
       gameOverSynth.volume.value = -6;
 
-      // real background music file, looped, kept quiet under gameplay sounds
       lofiPlayer = new Tone.Player('assets/sounds/folk-lofi.mp3').toDestination();
       lofiPlayer.volume.value = -20;
 
-      // wait for both audio files to actually finish loading before trying to play them,
-      // this is what was missing before and caused the whole startup sequence to crash
       await Tone.loaded();
 
       audioReady = true;
@@ -543,7 +545,10 @@
     async function startWebcam() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
+          video: {
+            width: { ideal: 640 },
+            height: { ideal: 480 }
+          },
           audio: false
         });
         video.srcObject = stream;
@@ -585,8 +590,6 @@
         } catch (error) {
           console.error("Audio setup failed, continuing without full audio:", error);
           status.textContent = "Some audio failed to load, continuing anyway...";
-          // deliberately no "return" here, so a music/sound problem can never
-          // prevent the camera and game itself from starting
         }
       }
 
@@ -781,7 +784,6 @@
 
       if (obj.isBomb) {
         lives--;
-        console.log('LIFE LOST: sliced a bomb at', Math.round(obj.x), Math.round(obj.y), '| lives now:', lives);
         comboCount = 0;
         triggerComboFlash('BOMB!', 'rgba(255, 47, 77, 1)');
         spawnBurst(obj.x, obj.y, 30, 'rgba(255, 47, 77, ALPHA)');
@@ -1013,6 +1015,10 @@
         ctx.fill();
       });
       burstParticles = burstParticles.filter((p) => p.alpha > 0);
+
+      if (burstParticles.length > MAX_PARTICLES) {
+        burstParticles = burstParticles.slice(burstParticles.length - MAX_PARTICLES);
+      }
     }
 
     function drawTrail() {
@@ -1055,10 +1061,7 @@
       activeObjects = activeObjects.filter((obj) => {
         const fellPastBottom = obj.vy > 0 && (obj.y - obj.radius > canvas.height);
         if (fellPastBottom) {
-          if (!obj.isBomb) {
-            missedCount++;
-            console.log('LIFE LOST: missed a fruit falling off screen, type:', obj.type.name);
-          }
+          if (!obj.isBomb) missedCount++;
           return false;
         }
         return true;
@@ -1066,7 +1069,6 @@
 
       if (missedCount > 0) {
         lives -= missedCount;
-        console.log('Lives now:', lives);
         comboCount = 0;
         if (lives <= 0) {
           endGame();
@@ -1078,21 +1080,27 @@
       const now = performance.now();
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      if (handLandmarker && video.readyState >= 2) {
+      frameCounter++;
+      if (handLandmarker && video.readyState >= 2 && frameCounter % 2 === 0) {
         try {
           const results = handLandmarker.detectForVideo(video, now);
           if (results.landmarks && results.landmarks.length > 0) {
             const indexTip = results.landmarks[0][8];
+            lastFingerX = indexTip.x;
+            lastFingerY = indexTip.y;
             updateTrail(indexTip.x, indexTip.y);
-            drawGlowDot(indexTip.x * canvas.width, indexTip.y * canvas.height, 20, {
-              glow: 'rgba(127, 255, 212, 0.8)',
-              core: '#7fffd4'
-            });
             if (gameActive) checkSliceCollisions();
           }
         } catch (error) {
           console.error("Detection error:", error);
         }
+      }
+
+      if (lastFingerX !== null) {
+        drawGlowDot(lastFingerX * canvas.width, lastFingerY * canvas.height, 20, {
+          glow: 'rgba(127, 255, 212, 0.8)',
+          core: '#7fffd4'
+        });
       }
 
       if (gameActive) {
